@@ -170,6 +170,20 @@ int main(int argc, const char **argv)
     assert(string_array == NULL);
     debug_printf("config_parser_get_string_array(string_array2, ', ') result: %zd\n", len);
 
+    uint32_t *uin32_array;
+    config_parser_get_uint32_array(parser, "uint32_array", ",", &uin32_array, &len);
+    assert(uin32_array);
+    assert(len == 5);
+    assert(uin32_array[0] == 12);
+    assert(uin32_array[len-1] == 188569);
+    free(uin32_array);
+
+    rc = config_parser_get_uint32_array(parser, "uint32_array.1", ",", &uin32_array, &len);
+    assert(rc == ERANGE);
+    assert(!uin32_array);
+    assert(!len);
+
+
     config_parser_deinit(parser);
     fprintf(stdout, "\n\nAll tests are successful!\n");
     return 0;

@@ -14,7 +14,7 @@
         int rc = config_parser_get_uint64##hex(parser, name, &tmp);             \
         if (rc)                                                                 \
             return rc;                                                          \
-        if (tmp > (uint##type_size##_t)(~0))                                    \
+        if (check_urange(tmp, type_size))                                       \
             return ERANGE;                                                      \
         *value = tmp & (uint##type_size##_t)(~0);                               \
         return 0;                                                               \
@@ -28,9 +28,7 @@
         int rc = config_parser_get_int64(parser, name, &tmp);                   \
         if (rc)                                                                 \
             return rc;                                                          \
-        if (tmp > (limit - 1))                                                  \
-            return ERANGE;                                                      \
-        if (tmp < -limit)                                                       \
+        if (check_srange(tmp, type_size))                                       \
             return ERANGE;                                                      \
         *value = (int##type_size##_t)tmp;                                       \
         return 0;                                                               \
@@ -42,6 +40,24 @@ typedef struct config_tuple_
     char *value;
     struct config_tuple_ *next;
 } config_tuple_t;
+
+static int check_urange(uint64_t value, uint8_t type_size)
+{
+    uint64_t limit = ((uint64_t)1 << type_size) - 1;
+    if (value > limit)
+        return ERANGE;
+    return 0;
+}
+
+static int check_srange(int64_t value, uint8_t type_size)
+{
+    int64_t limit = ((int64_t)1 << (type_size - 1)) - 1;
+    if (value > limit)
+        return ERANGE;
+    if (value < (-limit - 1))
+        return ERANGE;
+    return 0;
+}
 
 static char *ltrim(char *line)
 {
@@ -261,6 +277,19 @@ DECLARE_GET_UINTx(8, x)
 DECLARE_GET_UINTx(16, x)
 DECLARE_GET_UINTx(32, x)
 
+static int config_parser_get_array_len(config_tuple_t *tuple,
+        const char *delimiters, size_t *len)
+{
+    char *value = strdup(tuple->value);
+    if (!value) return ENOMEM;
+    /* len can be set to 1 safely since tuples have no empty values */
+    *len = 1;
+    strtok(value, delimiters);
+    while(strtok(NULL, delimiters)) (*len)++;
+    free(value);
+    return 0;
+}
+
 int config_parser_get_string_array(config_parser_context_t *parser,
     const char *name, const char *delimiters, char ***array_ref, size_t *len)
 {
@@ -270,20 +299,20 @@ int config_parser_get_string_array(config_parser_context_t *parser,
     if (!tuple)
         return ENOENT;
 
-    char *value = strdup(tuple->value);
-    if (!value) return ENOMEM;
-    /* len can be set to 1 safely since tuples have no empty values */
-    *len = 1;
-    strtok(value, delimiters);
-    while(strtok(NULL, delimiters)) (*len)++;
-    free(value);
+    int rc = config_parser_get_array_len(tuple, delimiters, len);
+    if (rc) return rc;
 
-    value = strdup(tuple->value);
-    if (!value) return errno;
+    char *value = strdup(tuple->value);
+    if (!value)
+    {
+        *len = 0;
+        return errno;
+    }
     char **array = calloc(*len, sizeof(char*));
     if (!array)
     {
         free(value);
+        *len = 0;
         return ENOMEM;
     }
     array[0] = strdup(strtok(value, delimiters));
@@ -291,20 +320,20 @@ int config_parser_get_string_array(config_parser_context_t *parser,
     {
         free(value);
         free(array);
+        *len = 0;
         return ENOMEM;
     }
-    int ret = 0;
     for (int idx = 1 ; idx < *len ; idx++)
     {
         array[idx] = strdup(strtok(NULL, delimiters));
         if (!array[idx])
         {
-            ret = EINVAL;
+            rc = EINVAL;
             goto on_error;
         }
     }
 on_error:
-    if (ret)
+    if (rc)
     {
         for (int idx = 0 ; idx < *len ; idx++)
         {
@@ -313,7 +342,76 @@ on_error:
         }
         free(array);
         array = NULL;
+        *len = 0;
     }
+    free(value);
     *array_ref = array;
-    return ret;
+    return rc;
+}
+
+int config_parser_get_uint32_array(config_parser_context_t *parser,
+        const char *name, const char *delimiters, uint32_t **array_ref, size_t *len)
+{
+    *array_ref = NULL;
+    *len = 0;
+    config_tuple_t *tuple = find_tuple(parser, name);
+    if (!tuple)
+        return ENOENT;
+
+    int rc = config_parser_get_array_len(tuple, delimiters, len);
+    if (rc) return rc;
+
+    char *value = strdup(tuple->value);
+    if (!value)
+    {
+        *len = 0;
+        return errno;
+    }
+    uint32_t *array = calloc(*len, sizeof(uint32_t));
+    if (!array)
+    {
+        free(value);
+        *len = 0;
+        return ENOMEM;
+    }
+    uint64_t tmp;
+    if (sscanf(strtok(value, delimiters), "%ld", &tmp) != 1)
+    {
+        rc = EINVAL;
+        *len = 0;
+        goto on_error;
+    }
+    if (check_urange(tmp, 32))
+    {
+        rc = ERANGE;
+        *len = 0;
+        goto on_error;
+    }
+    array[0] = tmp;
+    for (int idx = 1 ; idx < *len ; idx++)
+    {
+        if (sscanf(strtok(NULL, delimiters), "%ld", &tmp) != 1)
+        {
+            rc = EINVAL;
+            *len = 0;
+            goto on_error;
+        }
+        if (check_urange(tmp, 32))
+        {
+            rc = ERANGE;
+            *len = 0;
+            goto on_error;
+        }
+        array[idx] = tmp;
+    }
+on_error:
+    if (rc)
+    {
+        free(array);
+        array = NULL;
+        *len = 0;
+    }
+    free(value);
+    *array_ref = array;
+    return rc;
 }
