@@ -60,6 +60,7 @@ int main(int argc, const char **argv)
 
     rc = config_parser_get_uint32x(parser, "value32x.1", &u32);
     assert(!rc);
+    assert(u32 == 0x16);
     if (!rc)
         debug_printf("value32x.1 is %d -- 0x%x\n", u32, u32);
     else
@@ -67,6 +68,7 @@ int main(int argc, const char **argv)
 
     rc = config_parser_get_uint32x(parser, "value32x.2", &u32);
     assert(!rc);
+    assert(u32 == 0xa13);
     if (!rc)
         debug_printf("value32x.2 is %d -- 0x%x\n", u32, u32);
     else
@@ -87,19 +89,19 @@ int main(int argc, const char **argv)
     else
         debug_printf("config_parser_get_uint64x(value64x) error --  %s\n", strerror(rc));
 
-    rc = config_parser_get_uint64x(parser, "value64x.1", &u64);
-    assert(!rc);
-    if (!rc)
-        debug_printf("value64x.1 is %ld -- 0x%lx\n", u64, u64);
-    else
-        debug_printf("config_parser_get_uint64x(value64x.1) error --  %s\n", strerror(rc));
-
-    rc = config_parser_get_uint64x(parser, "value64x.2", &u64);
-    assert(rc);
-    if (!rc)
-        debug_printf("value64x.2 is %ld -- 0x%lx\n", u64, u64);
-    else
-        debug_printf("config_parser_get_uint64x(value64x.2) error --  %s\n", strerror(rc));
+    // rc = config_parser_get_uint64x(parser, "value64x.1", &u64);
+    // assert(!rc);
+    // if (!rc)
+    //     debug_printf("value64x.1 is %ld -- 0x%lx\n", u64, u64);
+    // else
+    //     debug_printf("config_parser_get_uint64x(value64x.1) error --  %s\n", strerror(rc));
+    //
+    // rc = config_parser_get_uint64x(parser, "value64x.2", &u64);
+    // assert(rc);
+    // if (!rc)
+    //     debug_printf("value64x.2 is %ld -- 0x%lx\n", u64, u64);
+    // else
+    //     debug_printf("config_parser_get_uint64x(value64x.2) error --  %s\n", strerror(rc));
 
     int8_t s8;
     rc = config_parser_get_int8(parser, "signed8", &s8);
@@ -170,6 +172,20 @@ int main(int argc, const char **argv)
     assert(string_array == NULL);
     debug_printf("config_parser_get_string_array(string_array2, ', ') result: %zd\n", len);
 
+    uint8_t *uin8_array;
+    config_parser_get_uint8_array(parser, "uint8_array", ",", &uin8_array, &len);
+    assert(uin8_array);
+    assert(len == 5);
+    assert(uin8_array[0] == 12);
+    assert(uin8_array[len-1] == 255);
+    free(uin8_array);
+
+    rc = config_parser_get_uint8_array(parser, "uint8_array.1", ",", &uin8_array, &len);
+    assert(rc == ERANGE);
+    assert(!uin8_array);
+    assert(!len);
+    free(uin8_array);
+
     uint32_t *uin32_array;
     config_parser_get_uint32_array(parser, "uint32_array", ",", &uin32_array, &len);
     assert(uin32_array);
@@ -182,7 +198,34 @@ int main(int argc, const char **argv)
     assert(rc == ERANGE);
     assert(!uin32_array);
     assert(!len);
+    free(uin32_array);
 
+    config_parser_get_uint32x_array(parser, "uint32_arrayx", ",", &uin32_array, &len);
+    assert(uin32_array);
+    assert(len == 5);
+    assert(uin32_array[0] == 0x12);
+    assert(uin32_array[len-1] == 0x188569);
+    free(uin32_array);
+
+    rc = config_parser_get_uint32x_array(parser, "uint32_arrayx.1", ",", &uin32_array, &len);
+    assert(rc == ERANGE);
+    assert(!uin32_array);
+    assert(!len);
+    free(uin32_array);
+
+    uint64_t *uin64_array;
+    rc = config_parser_get_uint64x_array(parser, "uint64_arrayx", ",", &uin64_array, &len);
+    assert(uin64_array);
+    assert(len == 5);
+    assert(uin64_array[0] == 0x12);
+    assert(uin64_array[len-1] == 0x188569);
+    free(uin64_array);
+
+    rc = config_parser_get_uint64x_array(parser, "uint64_arrayx.1", ",", &uin64_array, &len);
+    assert(rc == ERANGE);
+    assert(!uin64_array);
+    assert(!len);
+    free(uin64_array);
 
     config_parser_deinit(parser);
     fprintf(stdout, "\n\nAll tests are successful!\n");
