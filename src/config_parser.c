@@ -215,6 +215,24 @@ const char *config_parser_get_string(config_parser_context_t *parser,
     return tuple->value;
 }
 
+static int str_to_64bits(const char *chain, uint64_t *value, bool is_decimal,
+        bool is_signed)
+{
+    const char *fmt;
+    if (is_signed)
+        fmt = "%ld";
+    else if (is_decimal)
+        fmt = "%lu";
+    else
+        fmt = "%lx";
+    errno = 0;
+    if (sscanf(chain, fmt, value) == 1)
+        return errno;
+
+    /* sscanf failed... */
+    return EINVAL;
+}
+
 int config_parser_get_int64(config_parser_context_t *parser, const char *name,
         int64_t *value)
 {
@@ -222,41 +240,12 @@ int config_parser_get_int64(config_parser_context_t *parser, const char *name,
     if (!tuple)
         return ENOENT;
 
-    const char *fmt;
-    errno = 0;
-    if (sscanf(tuple->value, "%ld", value))
-    {
-        return errno;
-    }
-
-    /* sscanf failed... */
-    return EINVAL;
+    return str_to_64bits(tuple->value, value, false, true);
 }
 
 DECLARE_GET_INTx(8)
 DECLARE_GET_INTx(16)
 DECLARE_GET_INTx(32)
-
-#include <assert.h>
-
-static int str2uint64(const char *chain, uint64_t *value, bool is_decimal)
-{
-    const char *fmt;
-    if (is_decimal)
-        fmt = "%lu";
-    else
-        fmt = "%lx";
-    errno = 0;
-    if (sscanf(chain, fmt, value) == 1)
-    {
-        //printf("sscanf('%s', '%s', 0x%lx) -- errno is %d\n", chain, fmt, *value, rc);
-        //assert(*value < 0x615f32336e6975);
-        return errno;
-    }
-
-    /* sscanf failed... */
-    return EINVAL;
-}
 
 static int config_parser_get_uint64_priv(config_parser_context_t *parser,
         const char *name, uint64_t *value, bool is_decimal)
@@ -265,7 +254,7 @@ static int config_parser_get_uint64_priv(config_parser_context_t *parser,
     if (!tuple)
         return ENOENT;
 
-    return str2uint64(tuple->value, value, is_decimal);
+    return str_to_64bits(tuple->value, value, is_decimal, false);
 }
 
 int config_parser_get_uint64(config_parser_context_t *parser, const char *name, uint64_t *value)
@@ -358,78 +347,113 @@ on_error:
     return rc;
 }
 
-#define DECLARE_GET_UINTx_ARRAY(type_size, suffix, is_decimal)                        \
-    int config_parser_get_uint##type_size##suffix##_array(                     \
-        config_parser_context_t *parser, const char *name, \
-        const char *delimiters, uint##type_size##_t **array_ref, size_t *len)\
-    {\
-        *array_ref = NULL;\
-        *len = 0;\
-        config_tuple_t *tuple = find_tuple(parser, name);\
-        if (!tuple)\
-            return ENOENT;\
-        int rc = config_parser_get_array_len(tuple, delimiters, len);\
-        if (rc) return rc;\
-        char *value = strdup(tuple->value);\
-        if (!value)\
-        {\
-            *len = 0;\
-            return errno;\
-        }\
-        uint##type_size##_t *array = calloc(*len, sizeof(uint##type_size##_t));\
-        if (!array)\
-        {\
-            free(value);\
-            *len = 0;\
-            return ENOMEM;\
-        }\
-        uint64_t tmp;\
-        rc = str2uint64(strtok(value, delimiters), &tmp, is_decimal);\
-        if (rc)\
-        {\
-            *len = 0;\
-            goto on_error;\
-        }\
-        if ((type_size != 64) && check_urange(tmp, type_size))\
-        {\
-            rc = ERANGE;\
-            *len = 0;\
-            goto on_error;\
-        }\
-        array[0] = tmp;\
-        for (int idx = 1 ; idx < *len ; idx++)\
-        {\
-            rc = str2uint64(strtok(NULL, delimiters), &tmp, is_decimal);\
-            if (rc)\
-            {\
-                *len = 0;\
-                goto on_error;\
-            }\
-            if ((type_size != 64) && check_urange(tmp, type_size))\
-            {\
-                rc = ERANGE;\
-                *len = 0;\
-                goto on_error;\
-            }\
-            array[idx] = tmp;\
-        }\
-    on_error:\
-        if (rc)\
-        {\
-            free(array);\
-            array = NULL;\
-            *len = 0;\
-        }\
-        free(value);\
-        *array_ref = array;\
-        return rc;\
+#define DECLARE_GET_INTx_ARRAY(type_size, sign, suffix, is_decimal, is_signed)  \
+    int config_parser_get_##sign##int##type_size##suffix##_array(               \
+        config_parser_context_t *parser, const char *name,                      \
+        const char *delimiters, sign##int##type_size##_t **array_ref,           \
+        size_t *len)                                                            \
+    {                                                                           \
+        *array_ref = NULL;                                                      \
+        *len = 0;                                                               \
+        config_tuple_t *tuple = find_tuple(parser, name);                       \
+        if (!tuple)                                                             \
+            return ENOENT;                                                      \
+        int rc = config_parser_get_array_len(tuple, delimiters, len);           \
+        if (rc) return rc;                                                      \
+        char *value = strdup(tuple->value);                                     \
+        if (!value)                                                             \
+        {                                                                       \
+            *len = 0;                                                           \
+            return errno;                                                       \
+        }                                                                       \
+        sign##int##type_size##_t *array = calloc(*len,                          \
+                sizeof(sign##int##type_size##_t));                              \
+        if (!array)                                                             \
+        {                                                                       \
+            free(value);                                                        \
+            *len = 0;                                                           \
+            return ENOMEM;                                                      \
+        }                                                                       \
+        sign##int64_t tmp;                                                      \
+        rc = str_to_64bits(strtok(value, delimiters), &tmp, is_decimal,         \
+                is_signed);                                                     \
+        if (rc)                                                                 \
+        {                                                                       \
+            *len = 0;                                                           \
+            goto on_error;                                                      \
+        }                                                                       \
+        if ((type_size != 64))                                                  \
+        {                                                                       \
+            if (is_signed)                                                      \
+            {                                                                   \
+                if (check_srange(tmp, type_size))                               \
+                {                                                               \
+                    rc = ERANGE;                                                \
+                    *len = 0;                                                   \
+                    goto on_error;                                              \
+                }                                                               \
+            }                                                                   \
+            else                                                                \
+            {                                                                   \
+                if (check_urange(tmp, type_size))                               \
+                {                                                               \
+                    rc = ERANGE;                                                \
+                    *len = 0;                                                   \
+                    goto on_error;                                              \
+                }                                                               \
+            }                                                                   \
+        }                                                                       \
+        array[0] = tmp;                                                         \
+        for (int idx = 1 ; idx < *len ; idx++)                                  \
+        {                                                                       \
+            rc = str_to_64bits(strtok(NULL, delimiters), &tmp, is_decimal,      \
+                    is_signed);                                                 \
+            if (rc)                                                             \
+            {                                                                   \
+                *len = 0;                                                       \
+                goto on_error;                                                  \
+            }                                                                   \
+            if ((type_size != 64))                                              \
+            {                                                                   \
+                if (is_signed)                                                  \
+                {                                                               \
+                    if (check_srange(tmp, type_size))                           \
+                    {                                                           \
+                        rc = ERANGE;                                            \
+                        *len = 0;                                               \
+                        goto on_error;                                          \
+                    }                                                           \
+                }                                                               \
+                else                                                            \
+                {                                                               \
+                    if (check_urange(tmp, type_size))                           \
+                    {                                                           \
+                        rc = ERANGE;                                            \
+                        *len = 0;                                               \
+                        goto on_error;                                          \
+                    }                                                           \
+                }                                                               \
+            }                                                                   \
+            array[idx] = tmp;                                                   \
+        }                                                                       \
+    on_error:                                                                   \
+        if (rc)                                                                 \
+        {                                                                       \
+            free(array);                                                        \
+            array = NULL;                                                       \
+            *len = 0;                                                           \
+        }                                                                       \
+        free(value);                                                            \
+        *array_ref = array;                                                     \
+        return rc;                                                              \
     }
 
-DECLARE_GET_UINTx_ARRAY(64, , true)
-DECLARE_GET_UINTx_ARRAY(64, x, false)
-DECLARE_GET_UINTx_ARRAY(32, , true)
-DECLARE_GET_UINTx_ARRAY(32, x, false)
-DECLARE_GET_UINTx_ARRAY(16, , true)
-DECLARE_GET_UINTx_ARRAY(16, x, false)
-DECLARE_GET_UINTx_ARRAY(8 , , true)
-DECLARE_GET_UINTx_ARRAY(8 , x, false)
+#define DECLARE_GET_ALL_INTx_ARRAYS(type_size)              \
+    DECLARE_GET_INTx_ARRAY(type_size,  ,  , true,  true)    \
+    DECLARE_GET_INTx_ARRAY(type_size, u, x, false, false)   \
+    DECLARE_GET_INTx_ARRAY(type_size, u,  , true,  false)
+
+DECLARE_GET_ALL_INTx_ARRAYS(64)
+DECLARE_GET_ALL_INTx_ARRAYS(32)
+DECLARE_GET_ALL_INTx_ARRAYS(16)
+DECLARE_GET_ALL_INTx_ARRAYS( 8)
